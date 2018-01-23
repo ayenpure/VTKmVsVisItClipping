@@ -14,7 +14,6 @@
 #include <vtkm/rendering/MapperGL.h>
 #include <vtkm/rendering/View3D.h>
 
-
 vtkm::rendering::View3D *view = nullptr;
 
 const vtkm::Int32 W = 512, H = 512;
@@ -102,70 +101,124 @@ int renderDataSet(vtkm::cont::DataSet &dataset) {
   return 0;
 }
 
-int performTrivialIsoVolume(vtkm::cont::DataSet& input,
-                            char *variable,
-                            vtkm::filter::Result& result,
-                            vtkm::Float32 isoValMin)
-{
+class PopulateIndices : public vtkm::worklet::WorkletMapField {
+public:
+  typedef void ControlSignature(FieldIn<> input, FieldOut<> output);
+  typedef void ExecutionSignature(_1, _2);
+
+  template <typename T>
+  VTKM_EXEC void operator()(const T &input, T &output) const {
+    output = input;
+  }
+};
+
+int performTrivialIsoVolume(vtkm::cont::DataSet &input, char *variable,
+                            vtkm::filter::Result &result,
+                            vtkm::Float32 isoValMin) {
+  using DeviceAdapterTag = vtkm::cont::DeviceAdapterTagSerial;
+  using DeviceAlgorithm =
+      typename vtkm::cont::DeviceAdapterAlgorithm<DeviceAdapterTag>;
+
+  // Add CellIds as cell centerd field.
+  vtkm::Id numCells = input.GetCellSet(0).GetNumberOfCells();
+
+  std::cout << "Number of Cells : " << numCells << std::endl;
+
+  vtkm::cont::ArrayHandle<vtkm::Id> cellIds;
+  cellIds.Allocate(numCells);
+  cellIds.PrepareForInPlace(DeviceAdapterTag());
+  vtkm::cont::ArrayHandleIndex indicesImplicitType(numCells);
+  vtkm::worklet::DispatcherMapField<PopulateIndices, DeviceAdapterTag>().Invoke(
+      indicesImplicitType, cellIds);
+  indicesImplicitType.ReleaseResources();
+
+  // Add derived field to dataset.
+  std::string newVariable("cellIds");
+  vtkm::cont::DataSetFieldAdd datasetFieldAdder;
+  datasetFieldAdder.AddCellField(input, newVariable, cellIds);
+
   vtkm::filter::ClipWithField clip;
   clip.SetClipValue(isoValMin);
   result = clip.Execute(input, std::string(variable));
   clip.MapFieldOntoOutput(result, input.GetPointField(variable));
+  clip.MapFieldOntoOutput(result, input.GetCellField(newVariable));
+  numCells = result.GetDataSet().GetCellSet(0).GetNumberOfCells();
+  vtkm::cont::ArrayHandle<vtkm::Id> newCells;
+  newCells.Allocate(numCells);
+  newCells.PrepareForInput(DeviceAdapterTag());
+  result.GetDataSet().GetCellField(newVariable).GetData().CopyTo(newCells);
+  DeviceAlgorithm::Unique(newCells);
+  std::cout << "New size : " << newCells.GetNumberOfValues() << std::endl;
   return 0;
 }
 
-class NegateFieldValues : public vtkm::worklet::WorkletMapField
-{
-public :
+class NegateFieldValues : public vtkm::worklet::WorkletMapField {
+public:
   typedef void ControlSignature(FieldInOut<> val);
   typedef void ExecutionSignature(_1);
 
-  template<typename T>
-  VTKM_EXEC void operator()(T& val) const
-  {
-    val = -val;
-  }
+  template <typename T> VTKM_EXEC void operator()(T &val) const { val = -val; }
 };
 
-int performMinMaxIsoVolume(vtkm::cont::DataSet& input,
-                           char *variable,
-                           vtkm::filter::Result& result,
-                           vtkm::Float32 isoValMin,
-                           vtkm::Float32 isoValMax)
-{
+int performMinMaxIsoVolume(vtkm::cont::DataSet &input, char *variable,
+                           vtkm::filter::Result &result,
+                           vtkm::Float32 isoValMin, vtkm::Float32 isoValMax) {
   using DeviceAdapterTag = vtkm::cont::DeviceAdapterTagSerial;
-  using DeviceAlgorithm = typename vtkm::cont::DeviceAdapterAlgorithm<DeviceAdapterTag>;
+  using DeviceAlgorithm =
+      typename vtkm::cont::DeviceAdapterAlgorithm<DeviceAdapterTag>;
+  vtkm::cont::DataSetFieldAdd datasetFieldAdder;
+
+  // Add CellIds as cell centerd field.
+  vtkm::Id numCells = input.GetCellSet(0).GetNumberOfCells();
+
+  std::cout << "Number of Cells : " << numCells << std::endl;
+
+  vtkm::cont::ArrayHandle<vtkm::Id> cellIds;
+  cellIds.Allocate(numCells);
+  cellIds.PrepareForInPlace(DeviceAdapterTag());
+  vtkm::cont::ArrayHandleIndex indicesImplicitType(numCells);
+  vtkm::worklet::DispatcherMapField<PopulateIndices, DeviceAdapterTag>().Invoke(
+      indicesImplicitType, cellIds);
+  indicesImplicitType.ReleaseResources();
+
+  // Add derived field to dataset.
+  std::string newVariable1("cellIds");
+  datasetFieldAdder.AddCellField(input, newVariable1, cellIds);
 
   vtkm::filter::Result firstResult, secondResult;
   vtkm::filter::ClipWithField firstClip, secondClip;
 
-  //Apply clip with Min.
+  // Apply clip with Min.
   firstClip.SetClipValue(isoValMin);
   firstResult = firstClip.Execute(input, std::string(variable));
   firstClip.MapFieldOntoOutput(firstResult, input.GetPointField(variable));
+  firstClip.MapFieldOntoOutput(firstResult, input.GetCellField(newVariable1));
 
-  //Output of first clip.
-  vtkm::cont::DataSet& firstClipped = firstResult.GetDataSet();
+  // Output of first clip.
+  vtkm::cont::DataSet &firstClipped = firstResult.GetDataSet();
 
-  //Negate field to apply clip once again.
+  // Negate field to apply clip once again.
   vtkm::cont::Field field = firstClipped.GetPointField(variable);
   vtkm::cont::DynamicArrayHandle fieldData = field.GetData();
   vtkm::cont::ArrayHandle<vtkm::Float32> newFieldData;
   newFieldData.Allocate(fieldData.GetNumberOfValues());
   fieldData.CopyTo(newFieldData);
-  vtkm::worklet::DispatcherMapField<NegateFieldValues, DeviceAdapterTag>().Invoke(newFieldData);
+  vtkm::worklet::DispatcherMapField<NegateFieldValues, DeviceAdapterTag>()
+      .Invoke(newFieldData);
 
-  //Add derived field to dataset.
+  // Add derived field to dataset.
   std::string newVariable("newVar");
-  vtkm::cont::DataSetFieldAdd datasetFieldAdder;
   datasetFieldAdder.AddPointField(firstClipped, newVariable, newFieldData);
 
-  //Apply clip with Max.
+  // Apply clip with Max.
   secondClip.SetClipValue(-isoValMax);
   secondResult = secondClip.Execute(firstClipped, newVariable);
-  secondClip.MapFieldOntoOutput(secondResult, firstClipped.GetPointField(newVariable));
+  secondClip.MapFieldOntoOutput(secondResult,
+                                firstClipped.GetPointField(newVariable));
+  secondClip.MapFieldOntoOutput(secondResult,
+                                firstClipped.GetCellField(newVariable1));
 
-  //Result of the Min-Max IsoVolume operation.
+  // Result of the Min-Max IsoVolume operation.
   result = secondResult;
   return 0;
 }
@@ -182,11 +235,11 @@ int parseParameters(int argc, char **argv, char **filename, char **variable,
   *filename = argv[1];
   *variable = argv[2];
 
-  if(argc >= 4)
+  if (argc >= 4)
     option = atoi(argv[3]);
-  if(argc >= 5)
+  if (argc >= 5)
     isoValMin = atof(argv[4]);
-  if(argc == 6)
+  if (argc == 6)
     isoValMax = atof(argv[5]);
 }
 
@@ -198,7 +251,8 @@ int main(int argc, char **argv) {
   char *filename, *variable;
   vtkm::Id option = 0;
   vtkm::Float32 isoValMin = 0.0f, isoValMax = 0.0f;
-  parseParameters(argc, argv, &filename, &variable, option, isoValMin, isoValMax);
+  parseParameters(argc, argv, &filename, &variable, option, isoValMin,
+                  isoValMax);
 
   glutInit(&argc, argv);
 
@@ -213,16 +267,15 @@ int main(int argc, char **argv) {
   // Apply filter
   vtkm::filter::Result result;
 
-  switch(option)
-  {
-    case 5:
-      std::cout << "Executing Min-Max IsoVolume." << std::endl;
-      performMinMaxIsoVolume(input, variable, result, isoValMin, isoValMax);
-      break;
-    default :
-      std::cout << "Executing trivial IsoVolume." << std::endl;
-      performTrivialIsoVolume(input, variable, result, isoValMin);
-      break;
+  switch (option) {
+  case 5:
+    std::cout << "Executing Min-Max IsoVolume." << std::endl;
+    performMinMaxIsoVolume(input, variable, result, isoValMin, isoValMax);
+    break;
+  default:
+    std::cout << "Executing trivial IsoVolume." << std::endl;
+    performTrivialIsoVolume(input, variable, result, isoValMin);
+    break;
   }
 
   // Retrieve resultant dataset
