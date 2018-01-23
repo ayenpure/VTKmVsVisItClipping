@@ -133,22 +133,15 @@ int performTrivialIsoVolume(vtkm::cont::DataSet &input, char *variable,
   indicesImplicitType.ReleaseResources();
 
   // Add derived field to dataset.
-  std::string newVariable("cellIds");
+  std::string cellIdsVar("cellIds");
   vtkm::cont::DataSetFieldAdd datasetFieldAdder;
-  datasetFieldAdder.AddCellField(input, newVariable, cellIds);
+  datasetFieldAdder.AddCellField(input, cellIdsVar, cellIds);
 
   vtkm::filter::ClipWithField clip;
   clip.SetClipValue(isoValMin);
   result = clip.Execute(input, std::string(variable));
   clip.MapFieldOntoOutput(result, input.GetPointField(variable));
-  clip.MapFieldOntoOutput(result, input.GetCellField(newVariable));
-  numCells = result.GetDataSet().GetCellSet(0).GetNumberOfCells();
-  vtkm::cont::ArrayHandle<vtkm::Id> newCells;
-  newCells.Allocate(numCells);
-  newCells.PrepareForInput(DeviceAdapterTag());
-  result.GetDataSet().GetCellField(newVariable).GetData().CopyTo(newCells);
-  DeviceAlgorithm::Unique(newCells);
-  std::cout << "New size : " << newCells.GetNumberOfValues() << std::endl;
+  clip.MapFieldOntoOutput(result, input.GetCellField(cellIdsVar));
   return 0;
 }
 
@@ -182,8 +175,8 @@ int performMinMaxIsoVolume(vtkm::cont::DataSet &input, char *variable,
   indicesImplicitType.ReleaseResources();
 
   // Add derived field to dataset.
-  std::string newVariable1("cellIds");
-  datasetFieldAdder.AddCellField(input, newVariable1, cellIds);
+  std::string cellIdsVar("cellIds");
+  datasetFieldAdder.AddCellField(input, cellIdsVar, cellIds);
 
   vtkm::filter::Result firstResult, secondResult;
   vtkm::filter::ClipWithField firstClip, secondClip;
@@ -192,7 +185,7 @@ int performMinMaxIsoVolume(vtkm::cont::DataSet &input, char *variable,
   firstClip.SetClipValue(isoValMin);
   firstResult = firstClip.Execute(input, std::string(variable));
   firstClip.MapFieldOntoOutput(firstResult, input.GetPointField(variable));
-  firstClip.MapFieldOntoOutput(firstResult, input.GetCellField(newVariable1));
+  firstClip.MapFieldOntoOutput(firstResult, input.GetCellField(cellIdsVar));
 
   // Output of first clip.
   vtkm::cont::DataSet &firstClipped = firstResult.GetDataSet();
@@ -216,7 +209,7 @@ int performMinMaxIsoVolume(vtkm::cont::DataSet &input, char *variable,
   secondClip.MapFieldOntoOutput(secondResult,
                                 firstClipped.GetPointField(newVariable));
   secondClip.MapFieldOntoOutput(secondResult,
-                                firstClipped.GetCellField(newVariable1));
+                                firstClipped.GetCellField(cellIdsVar));
 
   // Result of the Min-Max IsoVolume operation.
   result = secondResult;
@@ -229,7 +222,7 @@ int parseParameters(int argc, char **argv, char **filename, char **variable,
   if (argc < 3)
     std::cerr << "Invalid number of arguments" << std::endl;
 
-  /*Default Value for IsoVolume*/
+  /* Default Value for IsoVolume */
   isoValMin = 3.0f;
 
   *filename = argv[1];
@@ -241,6 +234,36 @@ int parseParameters(int argc, char **argv, char **filename, char **variable,
     isoValMin = atof(argv[4]);
   if (argc == 6)
     isoValMax = atof(argv[5]);
+}
+
+int processForSplitCells(vtkm::cont::DataSet &dataSet) {
+  using DeviceAdapterTag = vtkm::cont::DeviceAdapterTagSerial;
+  using DeviceAlgorithm =
+      typename vtkm::cont::DeviceAdapterAlgorithm<DeviceAdapterTag>;
+
+  std::string cellIdsVar("cellIds");
+  // Get the array handle for the cellIds variable
+  vtkm::cont::DynamicArrayHandle fieldData =
+      dataSet.GetCellField(cellIdsVar).GetData();
+  vtkm::Id numCellIds = fieldData.GetNumberOfValues();
+  vtkm::cont::ArrayHandle<vtkm::Id> fieldDataHandle;
+  fieldDataHandle.Allocate(numCellIds);
+  fieldData.CopyTo(fieldDataHandle);
+  vtkm::cont::ArrayHandleConstant<vtkm :: Id> toReduce(1, numCellIds);
+  // Sort
+  DeviceAlgorithm::Sort(fieldDataHandle);
+  // Extract unique, these were the cells that appear after the
+  // IsoVolume operation.
+  vtkm::cont::ArrayHandle<vtkm::Id> uniqueCellIds;
+  vtkm::cont::ArrayHandle<vtkm::Id> countCellIds;
+  // Reduce by Key
+  DeviceAlgorithm::ReduceByKey(fieldDataHandle, toReduce, uniqueCellIds,
+                               countCellIds, vtkm::Add());
+  std::cout << "Number of unique Cell IDs : " << uniqueCellIds.GetNumberOfValues() << std::endl;
+  auto keyPortal = uniqueCellIds.GetPortalConstControl();
+  auto countPortal = countCellIds.GetPortalConstControl();
+  for(int i = 0; i < 10; i++)
+    std::cout << keyPortal.Get(i) << " : " << countPortal.Get(i) << std::endl;
 }
 
 int main(int argc, char **argv) {
@@ -287,6 +310,8 @@ int main(int argc, char **argv) {
   std::cout << "Filtered number of Fields : " << clipped.GetNumberOfFields()
             << std::endl;
 
+  processForSplitCells(clipped);
+  // Render for verification if the dataset looks like VisIt.
   renderDataSet(clipped);
 
   return 0;
