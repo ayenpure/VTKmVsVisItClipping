@@ -269,8 +269,10 @@ int processForSplitCells(vtkm::cont::DataSet &dataSet) {
 int main(int argc, char **argv) {
 
   if (argc < 3)
+  {
     std::cerr << "Invalid num of arguments " << std::endl;
-
+    exit(0);
+  }
   char *filename, *variable;
   vtkm::Id option = 0;
   vtkm::Float32 isoValMin = 0.0f, isoValMax = 0.0f;
