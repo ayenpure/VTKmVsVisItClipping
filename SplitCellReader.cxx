@@ -1,5 +1,8 @@
 #include <cstdlib>
+#include <fstream>
+#include <iomanip>
 #include <vector>
+#include <string>
 #include <vtkm/cont/DataSet.h>
 #include <vtkm/io/reader/VTKDataSetReader.h>
 
@@ -8,7 +11,8 @@ int processForSplitCells(vtkm::cont::DataSet &dataSet) {
   using DeviceAlgorithm =
       typename vtkm::cont::DeviceAdapterAlgorithm<DeviceAdapterTag>;
 
-  std::cout << "Number of Fields : " << dataSet.GetNumberOfFields() << std::endl;
+  std::cout << "Number of Fields : " << dataSet.GetNumberOfFields()
+            << std::endl;
 
   std::string cellIdsVar("cellIds");
   // Get the array handle for the cellIds variable
@@ -32,22 +36,48 @@ int processForSplitCells(vtkm::cont::DataSet &dataSet) {
             << uniqueCellIds.GetNumberOfValues() << std::endl;
   auto keyPortal = uniqueCellIds.GetPortalConstControl();
   auto countPortal = countCellIds.GetPortalConstControl();
-  for (int i = 0; i < 10; i++)
-    std::cout << keyPortal.Get(i) << " : " << countPortal.Get(i) << std::endl;
-  return 0;
+  std::ofstream visitfile;
+  visitfile.open("vtkmfile.csv");
+  for(int i = 0; i < uniqueCellIds.GetNumberOfValues(); i++)
+    visitfile << keyPortal.Get(i) << ", " << countPortal.Get(i) << std::endl;
+  visitfile.close();
 }
 
-int parseFileForVisIt(char* filename)
-{
-  //Get the File
-  //look for avtOriginalCellNumbers
-  //Parse ignoring 0s and processing all other numbers
-  //Put the Data in a new vector and make an ArrayHandle out of it.
+int parseFileForVisIt(char *filename) {
+  using DeviceAdapterTag = vtkm::cont::DeviceAdapterTagSerial;
+  using DeviceAlgorithm =
+      typename vtkm::cont::DeviceAdapterAlgorithm<DeviceAdapterTag>;
+
+  // Get the File
+  // look for avtOriginalCellNumbers
+  // Parse ignoring 0s and processing all other numbers
+  // Put the Data in a new vector and make an ArrayHandle out of it.
   std::vector<vtkm::Id> fieldData;
+  std::ifstream toRead;
+  toRead.open(filename);
+  if (!toRead) {
+    std::cout << "No file found to read" << std::endl;
+    exit(0);
+  }
+  bool lineReached = false;
+  std::string buffer;
+  while(!toRead.eof() && !lineReached)
+  {
+    std::getline(toRead, buffer);
+    if(buffer.find("avtOriginalCellNumbers") != std::string::npos)
+      lineReached = true;
+  }
 
+  vtkm::Id zero, cellId;
+  while(toRead >> zero >> cellId)
+  {
+    fieldData.push_back(cellId);
+  }
 
-  vtkm::cont::ArrayHandle<vtkm::Id> fieldDataHandle(fieldData);
+  vtkm::cont::ArrayHandle<vtkm::Id> fieldDataHandle =
+      vtkm::cont::make_ArrayHandle(fieldData);
   // Array with al 1s to get count when reduced by key.
+  vtkm::Id numCellIds = fieldDataHandle.GetNumberOfValues();
   vtkm::cont::ArrayHandleConstant<vtkm::Id> toReduce(1, numCellIds);
 
   // Sort
@@ -65,20 +95,22 @@ int parseFileForVisIt(char* filename)
             << uniqueCellIds.GetNumberOfValues() << std::endl;
   auto keyPortal = uniqueCellIds.GetPortalConstControl();
   auto countPortal = countCellIds.GetPortalConstControl();
-  for (int i = 0; i < 10; i++)
-    std::cout << keyPortal.Get(i) << " : " << countPortal.Get(i) << std::endl;
-  return 0;
+  std::ofstream visitfile;
+  visitfile.open("visitfile.csv");
+  for(int i = 0; i < uniqueCellIds.GetNumberOfValues(); i++)
+    visitfile << keyPortal.Get(i) << ", " << countPortal.Get(i) << std::endl;
+  visitfile.close();
 }
-
 
 int main(int argc, char **argv) {
   if (argc < 2) {
     std::cout << "Invalid number of arguments" << std::endl;
     exit(0);
   }
-  char* filename = argv[1];
+  char *filename = argv[1];
   std::cout << "Calculating the number of Cell Splits" << std::endl;
   vtkm::io::reader::VTKDataSetReader reader(filename);
   vtkm::cont::DataSet input = reader.ReadDataSet();
-  processForSplitCells(input);
+  //processForSplitCells(input);
+  parseFileForVisIt(filename);
 }

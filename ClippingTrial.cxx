@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <fstream>
 
 #include <vtkm/filter/ClipWithField.h>
 #include <vtkm/io/reader/VTKDataSetReader.h>
@@ -262,8 +263,11 @@ int processForSplitCells(vtkm::cont::DataSet &dataSet) {
   std::cout << "Number of unique Cell IDs : " << uniqueCellIds.GetNumberOfValues() << std::endl;
   auto keyPortal = uniqueCellIds.GetPortalConstControl();
   auto countPortal = countCellIds.GetPortalConstControl();
-  for(int i = 0; i < 10; i++)
-    std::cout << keyPortal.Get(i) << " : " << countPortal.Get(i) << std::endl;
+  std::ofstream vtkmfile;
+  vtkmfile.open("vtkmfile.csv");
+  for(int i = 0; i < uniqueCellIds.GetNumberOfValues(); i++)
+    vtkmfile << keyPortal.Get(i) << ", " << countPortal.Get(i) << std::endl;
+  vtkmfile.close();
 }
 
 int main(int argc, char **argv) {

@@ -11,11 +11,16 @@ varaible = sys.argv[2]
 option = 0
 isoValMin = sys.float_info.min
 isoValMax = sys.float_info.max
+if(numArgs >= 4) :
+  if not sys.argv[3] is "_" :
+    isoValMin = float(sys.argv[3])
 if(numArgs >= 5) :
-  if not sys.argv[4] is "_" :
-    isoValMin = float(sys.argv[4])
-if(numArgs >= 6) :
-  isoValMax = float(sys.argv[5])
+  isoValMax = float(sys.argv[4])
+
+print "Min"
+print isoValMin
+print "Max"
+print isoValMax
 
 OpenDatabase("localhost:/home/abhishek/big/noise.vtk", 0)
 AddPlot("Mesh", "Mesh", 1, 1)
