@@ -260,14 +260,34 @@ int processForSplitCells(vtkm::cont::DataSet &dataSet) {
   // Reduce by Key
   DeviceAlgorithm::ReduceByKey(fieldDataHandle, toReduce, uniqueCellIds,
                                countCellIds, vtkm::Add());
-  std::cout << "Number of unique Cell IDs : " << uniqueCellIds.GetNumberOfValues() << std::endl;
+  vtkm::Id uniqueKeys = uniqueCellIds.GetNumberOfValues();
+  std::cout << "Number of unique Cell IDs : " << uniqueKeys << std::endl;
   auto keyPortal = uniqueCellIds.GetPortalConstControl();
   auto countPortal = countCellIds.GetPortalConstControl();
   std::ofstream vtkmfile;
   vtkmfile.open("vtkmfile.csv");
-  for(int i = 0; i < uniqueCellIds.GetNumberOfValues(); i++)
+  for(int i = 0; i < uniqueKeys; i++)
     vtkmfile << keyPortal.Get(i) << ", " << countPortal.Get(i) << std::endl;
   vtkmfile.close();
+
+  //For binning
+  DeviceAlgorithm::Sort(countCellIds);
+  vtkm::cont::ArrayHandleConstant<vtkm::Id> toReduceCounts(1, uniqueKeys);
+
+  vtkm::cont::ArrayHandle<vtkm::Id> uniqueCounts;
+  vtkm::cont::ArrayHandle<vtkm::Id> likeCountCells;
+
+  DeviceAlgorithm::ReduceByKey(countCellIds, toReduceCounts, uniqueCounts,
+                               likeCountCells, vtkm::Add());
+
+  auto splitCountPortal = uniqueCounts.GetPortalConstControl();
+  auto likeCountPortal = likeCountCells.GetPortalConstControl();
+  uniqueKeys = uniqueCounts.GetNumberOfValues();
+  vtkmfile.open("vtkmbinningfile.csv");
+  for(int i = 0; i < uniqueKeys; i++)
+    vtkmfile << splitCountPortal.Get(i) << ", " << likeCountPortal.Get(i) << std::endl;
+  vtkmfile.close();
+
 }
 
 int main(int argc, char **argv) {

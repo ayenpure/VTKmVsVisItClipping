@@ -6,43 +6,6 @@
 #include <vtkm/cont/DataSet.h>
 #include <vtkm/io/reader/VTKDataSetReader.h>
 
-int processForSplitCells(vtkm::cont::DataSet &dataSet) {
-  using DeviceAdapterTag = vtkm::cont::DeviceAdapterTagSerial;
-  using DeviceAlgorithm =
-      typename vtkm::cont::DeviceAdapterAlgorithm<DeviceAdapterTag>;
-
-  std::cout << "Number of Fields : " << dataSet.GetNumberOfFields()
-            << std::endl;
-
-  std::string cellIdsVar("cellIds");
-  // Get the array handle for the cellIds variable
-  vtkm::cont::DynamicArrayHandle fieldData =
-      dataSet.GetCellField(cellIdsVar).GetData();
-  vtkm::Id numCellIds = fieldData.GetNumberOfValues();
-  vtkm::cont::ArrayHandle<vtkm::Id> fieldDataHandle;
-  fieldDataHandle.Allocate(numCellIds);
-  fieldData.CopyTo(fieldDataHandle);
-  vtkm::cont::ArrayHandleConstant<vtkm::Id> toReduce(1, numCellIds);
-  // Sort
-  DeviceAlgorithm::Sort(fieldDataHandle);
-  // Extract unique, these were the cells that appear after the
-  // IsoVolume operation.
-  vtkm::cont::ArrayHandle<vtkm::Id> uniqueCellIds;
-  vtkm::cont::ArrayHandle<vtkm::Id> countCellIds;
-  // Reduce by Key
-  DeviceAlgorithm::ReduceByKey(fieldDataHandle, toReduce, uniqueCellIds,
-                               countCellIds, vtkm::Add());
-  std::cout << "Number of unique Cell IDs : "
-            << uniqueCellIds.GetNumberOfValues() << std::endl;
-  auto keyPortal = uniqueCellIds.GetPortalConstControl();
-  auto countPortal = countCellIds.GetPortalConstControl();
-  std::ofstream visitfile;
-  visitfile.open("vtkmfile.csv");
-  for(int i = 0; i < uniqueCellIds.GetNumberOfValues(); i++)
-    visitfile << keyPortal.Get(i) << ", " << countPortal.Get(i) << std::endl;
-  visitfile.close();
-}
-
 int parseFileForVisIt(char *filename) {
   using DeviceAdapterTag = vtkm::cont::DeviceAdapterTagSerial;
   using DeviceAlgorithm =
@@ -91,14 +54,33 @@ int parseFileForVisIt(char *filename) {
   // Reduce by Key
   DeviceAlgorithm::ReduceByKey(fieldDataHandle, toReduce, uniqueCellIds,
                                countCellIds, vtkm::Add());
+  vtkm::Id uniqueKeys =  uniqueCellIds.GetNumberOfValues();
   std::cout << "Number of unique Cell IDs : "
-            << uniqueCellIds.GetNumberOfValues() << std::endl;
+            << uniqueKeys << std::endl;
   auto keyPortal = uniqueCellIds.GetPortalConstControl();
   auto countPortal = countCellIds.GetPortalConstControl();
   std::ofstream visitfile;
   visitfile.open("visitfile.csv");
-  for(int i = 0; i < uniqueCellIds.GetNumberOfValues(); i++)
+  for(int i = 0; i < uniqueKeys; i++)
     visitfile << keyPortal.Get(i) << ", " << countPortal.Get(i) << std::endl;
+  visitfile.close();
+
+  //For binning
+  DeviceAlgorithm::Sort(countCellIds);
+  vtkm::cont::ArrayHandleConstant<vtkm::Id> toReduceCounts(1, uniqueKeys);
+
+  vtkm::cont::ArrayHandle<vtkm::Id> uniqueCounts;
+  vtkm::cont::ArrayHandle<vtkm::Id> likeCountCells;
+
+  DeviceAlgorithm::ReduceByKey(countCellIds, toReduceCounts, uniqueCounts,
+                               likeCountCells, vtkm::Add());
+
+  auto splitCountPortal = uniqueCounts.GetPortalConstControl();
+  auto likeCountPortal = likeCountCells.GetPortalConstControl();
+  uniqueKeys = uniqueCounts.GetNumberOfValues();
+  visitfile.open("visitbinningfile.csv");
+  for(int i = 0; i < uniqueKeys; i++)
+    visitfile << splitCountPortal.Get(i) << ", " << likeCountPortal.Get(i) << std::endl;
   visitfile.close();
 }
 
