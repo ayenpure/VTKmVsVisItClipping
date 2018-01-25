@@ -61,8 +61,9 @@ int parseFileForVisIt(char *filename) {
   auto countPortal = countCellIds.GetPortalConstControl();
   std::ofstream visitfile;
   visitfile.open("visitfile.csv");
+  visitfile << "cellid, occur, app" << std::endl;
   for(int i = 0; i < uniqueKeys; i++)
-    visitfile << keyPortal.Get(i) << ", " << countPortal.Get(i) << std::endl;
+    visitfile << keyPortal.Get(i) << ", " << countPortal.Get(i) << ", VisIt" << std::endl;
   visitfile.close();
 
   //For binning

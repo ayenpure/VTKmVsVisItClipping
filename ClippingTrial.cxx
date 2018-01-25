@@ -266,8 +266,9 @@ int processForSplitCells(vtkm::cont::DataSet &dataSet) {
   auto countPortal = countCellIds.GetPortalConstControl();
   std::ofstream vtkmfile;
   vtkmfile.open("vtkmfile.csv");
+  vtkmfile << "cellid, occur, app" << std::endl;
   for(int i = 0; i < uniqueKeys; i++)
-    vtkmfile << keyPortal.Get(i) << ", " << countPortal.Get(i) << std::endl;
+    vtkmfile << keyPortal.Get(i) << ", " << countPortal.Get(i) << ", VTK-m" << std::endl;
   vtkmfile.close();
 
   //For binning
