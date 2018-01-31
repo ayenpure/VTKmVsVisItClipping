@@ -1,107 +1,39 @@
 #include <cstdlib>
 #include <fstream>
 
+#include <vtkm/cont/DataSetFieldAdd.h>
 #include <vtkm/filter/ClipWithField.h>
 #include <vtkm/io/reader/VTKDataSetReader.h>
 
-// Required for compile, from the example.
-#include <vtkm/rendering/internal/OpenGLHeaders.h>
-
-#include <GL/glut.h>
-
-#include <vtkm/cont/DataSetFieldAdd.h>
-#include <vtkm/rendering/CanvasGL.h>
-#include <vtkm/rendering/ColorTable.h>
-#include <vtkm/rendering/MapperGL.h>
+// For offscreen rendering
+#include <vtkm/rendering/Actor.h>
+#include <vtkm/rendering/CanvasRayTracer.h>
+#include <vtkm/rendering/MapperRayTracer.h>
+#include <vtkm/rendering/Scene.h>
 #include <vtkm/rendering/View3D.h>
 
 #ifndef VTKM_DEVICE_ADAPTER
 #define VTKM_DEVICE_ADAPTER VTKM_DEVICE_ADAPTER_SERIAL
 #endif
 
-vtkm::rendering::View3D *view = nullptr;
-
-const vtkm::Int32 W = 512, H = 512;
-int buttonStates[3] = {GLUT_UP, GLUT_UP, GLUT_UP};
-bool shiftKey = false;
-int lastx = -1, lasty = -1;
-
-void reshape(int, int) {
-  // Don't allow resizing window.
-  glutReshapeWindow(W, H);
-}
-
-// Render the output using simple OpenGL
-void displayCall() {
-  view->Paint();
-  glutSwapBuffers();
-}
-
-// Allow rotations of the camera
-void mouseMove(int x, int y) {
-  const vtkm::Id width = view->GetCanvas().GetWidth();
-  const vtkm::Id height = view->GetCanvas().GetHeight();
-
-  // Map to XY
-  y = static_cast<int>(height - y);
-
-  if (lastx != -1 && lasty != -1) {
-    vtkm::Float32 x1 = vtkm::Float32(lastx * 2) / vtkm::Float32(width) - 1.0f;
-    vtkm::Float32 y1 = vtkm::Float32(lasty * 2) / vtkm::Float32(height) - 1.0f;
-    vtkm::Float32 x2 = vtkm::Float32(x * 2) / vtkm::Float32(width) - 1.0f;
-    vtkm::Float32 y2 = vtkm::Float32(y * 2) / vtkm::Float32(height) - 1.0f;
-
-    if (buttonStates[0] == GLUT_DOWN) {
-      if (shiftKey)
-        view->GetCamera().Pan(x2 - x1, y2 - y1);
-      else
-        view->GetCamera().TrackballRotate(x1, y1, x2, y2);
-    } else if (buttonStates[1] == GLUT_DOWN)
-      view->GetCamera().Zoom(y2 - y1);
-  }
-
-  lastx = x;
-  lasty = y;
-  glutPostRedisplay();
-}
-
-// Respond to mouse button
-void mouseCall(int button, int state, int vtkmNotUsed(x), int vtkmNotUsed(y)) {
-  int modifiers = glutGetModifiers();
-  shiftKey = modifiers & GLUT_ACTIVE_SHIFT;
-  buttonStates[button] = state;
-
-  // mouse down, reset.
-  if (buttonStates[button] == GLUT_DOWN) {
-    lastx = -1;
-    lasty = -1;
-  }
-}
-
 // Compute and render the pseudocolor plot for the dataset
 int renderDataSet(vtkm::cont::DataSet &dataset) {
-  lastx = lasty = -1;
-  glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE | GLUT_DEPTH);
-  glutInitWindowSize(W, H);
-  glutCreateWindow("Clip and Iso-surfacing");
-  glutDisplayFunc(displayCall);
-  glutMotionFunc(mouseMove);
-  glutMouseFunc(mouseCall);
-  glutReshapeFunc(reshape);
 
-  vtkm::rendering::Color bg(0.2f, 0.2f, 0.2f, 1.0f);
-  vtkm::rendering::CanvasGL canvas;
-  vtkm::rendering::MapperGL mapper;
+  vtkm::rendering::CanvasRayTracer canvas;
+  vtkm::rendering::MapperRayTracer mapper;
 
+  vtkm::rendering::Actor actor(dataset.GetCellSet(),
+                               dataset.GetCoordinateSystem(),
+                               dataset.GetField(0),
+                               vtkm::rendering::ColorTable("temperature"));
   vtkm::rendering::Scene scene;
-  scene.AddActor(vtkm::rendering::Actor(
-      dataset.GetCellSet(), dataset.GetCoordinateSystem(), dataset.GetField(0),
-      vtkm::rendering::ColorTable("rainbow")));
+  scene.AddActor(actor);
 
-  // Create vtkm rendering stuff.
-  view = new vtkm::rendering::View3D(scene, mapper, canvas, bg);
-  view->Initialize();
-  glutMainLoop();
+  // save image.
+  vtkm::rendering::View3D view(scene, mapper, canvas);
+  view.Initialize();
+  view.Paint();
+  view.SaveAs("clipped.ppm");
 
   return 0;
 }
@@ -307,9 +239,6 @@ int main(int argc, char **argv) {
   vtkm::Float32 isoValMin = 0.0f, isoValMax = 0.0f;
   parseParameters(argc, argv, &filename, &variable, option, isoValMin,
                   isoValMax);
-
-  glutInit(&argc, argv);
-
   // Read dataset
   vtkm::io::reader::VTKDataSetReader reader(filename);
   vtkm::cont::DataSet input = reader.ReadDataSet();
