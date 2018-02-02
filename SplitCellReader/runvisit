@@ -1,0 +1,4 @@
+alias visit=/home/abhishek/big/visit2_13_0.linux-x86_64/bin/visit
+visit -cli -nowin -s clippingVisit.py $1 $2 $3 $4 $5
+
+
