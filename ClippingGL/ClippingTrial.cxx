@@ -1,15 +1,22 @@
+#include <cfloat>
 #include <cstdlib>
 #include <fstream>
+#include <sstream>
+#include <vector>
 
+
+#include <vtkm/cont/DataSetFieldAdd.h>
 #include <vtkm/filter/ClipWithField.h>
+#include <vtkm/filter/ClipWithImplicitFunction.h>
 #include <vtkm/io/reader/VTKDataSetReader.h>
+#include <vtkm/io/writer/VTKDataSetWriter.h>
+
 
 // Required for compile, from the example.
 #include <vtkm/rendering/internal/OpenGLHeaders.h>
 
 #include <GL/glut.h>
 
-#include <vtkm/cont/DataSetFieldAdd.h>
 #include <vtkm/rendering/CanvasGL.h>
 #include <vtkm/rendering/ColorTable.h>
 #include <vtkm/rendering/MapperGL.h>
@@ -193,19 +200,21 @@ int performMinMaxIsoVolume(vtkm::cont::DataSet &input, char *variable,
   firstClip.MapFieldOntoOutput(firstResult, input.GetCellField(cellIdsVar));
 
   // Output of first clip.
-  vtkm::cont::DataSet &firstClipped = firstResult.GetDataSet();
+  vtkm::cont::DataSet& firstClipped = firstResult.GetDataSet();
+
+  vtkm::cont::Field field;
+  vtkm::cont::DynamicArrayHandle fieldData;
+  vtkm::cont::ArrayHandle<vtkm::Float32> newFieldData;
+  std::string newVariable(variable);
 
   // Negate field to apply clip once again.
-  vtkm::cont::Field field = firstClipped.GetPointField(variable);
-  vtkm::cont::DynamicArrayHandle fieldData = field.GetData();
-  vtkm::cont::ArrayHandle<vtkm::Float32> newFieldData;
+  field  = firstClipped.GetPointField(variable);
+  fieldData = field.GetData();
   newFieldData.Allocate(fieldData.GetNumberOfValues());
   fieldData.CopyTo(newFieldData);
   vtkm::worklet::DispatcherMapField<NegateFieldValues, DeviceAdapterTag>()
       .Invoke(newFieldData);
-
   // Add derived field to dataset.
-  std::string newVariable("newVar");
   datasetFieldAdder.AddPointField(firstClipped, newVariable, newFieldData);
 
   // Apply clip with Max.
@@ -216,29 +225,22 @@ int performMinMaxIsoVolume(vtkm::cont::DataSet &input, char *variable,
   secondClip.MapFieldOntoOutput(secondResult,
                                 firstClipped.GetCellField(cellIdsVar));
 
+  newFieldData.ReleaseResources();
+
+  vtkm::cont::DataSet& secondClipped = secondResult.GetDataSet();
+  // Negate field to apply clip once again.
+  field  = secondClipped.GetPointField(variable);
+  fieldData = field.GetData();
+  newFieldData.Allocate(fieldData.GetNumberOfValues());
+  fieldData.CopyTo(newFieldData);
+  vtkm::worklet::DispatcherMapField<NegateFieldValues, DeviceAdapterTag>()
+      .Invoke(newFieldData);
+  // Add derived field to dataset.
+  datasetFieldAdder.AddPointField(secondClipped, newVariable, newFieldData);
+
   // Result of the Min-Max IsoVolume operation.
   result = secondResult;
   return 0;
-}
-
-int parseParameters(int argc, char **argv, char **filename, char **variable,
-                    vtkm::Id &option, vtkm::Float32 &isoValMin,
-                    vtkm::Float32 &isoValMax) {
-  if (argc < 3)
-    std::cerr << "Invalid number of arguments" << std::endl;
-
-  /* Default Value for IsoVolume */
-  isoValMin = 3.0f;
-
-  *filename = argv[1];
-  *variable = argv[2];
-
-  if (argc >= 4)
-    option = atoi(argv[3]);
-  if (argc >= 5)
-    isoValMin = atof(argv[4]);
-  if (argc == 6)
-    isoValMax = atof(argv[5]);
 }
 
 int processForSplitCells(vtkm::cont::DataSet &dataSet) {
@@ -295,20 +297,67 @@ int processForSplitCells(vtkm::cont::DataSet &dataSet) {
 
 }
 
+int performTrivialClip(vtkm::cont::DataSet &input, char* variable,
+                       vtkm::filter::Result &result,
+                       vtkm::Vec<vtkm::Float32, 3> origin,
+                       vtkm::Vec<vtkm::Float32, 3> normal)
+{
+  using DeviceAdapterTag = VTKM_DEFAULT_DEVICE_ADAPTER_TAG;
+  using DeviceAlgorithm =
+      typename vtkm::cont::DeviceAdapterAlgorithm<DeviceAdapterTag>;
+
+  // Add CellIds as cell centerd field.
+  vtkm::Id numCells = input.GetCellSet(0).GetNumberOfCells();
+
+  std::cout << "Number of Cells : " << numCells << std::endl;
+
+  vtkm::cont::ArrayHandle<vtkm::Id> cellIds;
+  cellIds.Allocate(numCells);
+  cellIds.PrepareForInPlace(DeviceAdapterTag());
+  vtkm::cont::ArrayHandleIndex indicesImplicitType(numCells);
+  vtkm::worklet::DispatcherMapField<PopulateIndices, DeviceAdapterTag>().Invoke(
+      indicesImplicitType, cellIds);
+  indicesImplicitType.ReleaseResources();
+
+  // Add derived field to dataset.
+  std::string cellIdsVar("cellIds");
+  vtkm::cont::DataSetFieldAdd datasetFieldAdder;
+  datasetFieldAdder.AddCellField(input, cellIdsVar, cellIds);
+
+  vtkm::filter::ClipWithImplicitFunction clip;
+  clip.SetImplicitFunction(vtkm::cont::make_ImplicitFunctionHandle(vtkm::Plane(origin, normal)));
+  result = clip.Execute(input);
+  clip.MapFieldOntoOutput(result, input.GetPointField(variable));
+  clip.MapFieldOntoOutput(result, input.GetCellField(cellIdsVar));
+  return 0;
+}
+
+int parseParameters(int argc, char **argv,
+                    char **filename, char **variable,
+                    std::vector<float>& params)
+{
+  if (argc < 3)
+    std::cerr << "Invalid number of arguments" << std::endl;
+  *filename = argv[1];
+  *variable = argv[2];
+  int numParams = argc - 3;
+  for(int i = 0; i < numParams; i++)
+  {
+    params.push_back(atof(argv[i+3]));
+  }
+}
+
 int main(int argc, char **argv) {
 
+  glutInit(&argc, argv);
   if (argc < 3)
   {
     std::cerr << "Invalid num of arguments " << std::endl;
     exit(0);
   }
   char *filename, *variable;
-  vtkm::Id option = 0;
-  vtkm::Float32 isoValMin = 0.0f, isoValMax = 0.0f;
-  parseParameters(argc, argv, &filename, &variable, option, isoValMin,
-                  isoValMax);
-
-  glutInit(&argc, argv);
+  std::vector<float> params;
+  parseParameters(argc, argv, &filename, &variable, params);
 
   // Read dataset
   vtkm::io::reader::VTKDataSetReader reader(filename);
@@ -318,17 +367,37 @@ int main(int argc, char **argv) {
   std::cout << "Original number of Cells : "
             << input.GetCellSet(0).GetNumberOfCells() << std::endl;
 
-  // Apply filter
+  // Apply filter begins here.
   vtkm::filter::Result result;
 
+  int option = params.size() == 0 ? 0: (int)params[0];
+  float isoValMin = FLT_MIN, isoValMax = FLT_MAX;
+  vtkm::Vec<vtkm::Float32, 3> origin;
+  vtkm::Vec<vtkm::Float32, 3> normal;
+
   switch (option) {
-  case 5:
+  case 1 :
+    // Case of Implicit Function.
+    origin = vtkm::make_Vec(params[1], params[2], params[3]);
+    normal = vtkm::make_Vec(params[4], params[5], params[6]);
+    performTrivialClip(input, variable, result,origin, normal);
+    break;
+  case 2 :
+    // Case for simple IsoVolume.
+    isoValMax = (params.size() > 1) ? params[1] : 3.0f;
+    std::cout << "Executing trivial IsoVolume." << std::endl;
+    performTrivialIsoVolume(input, variable, result, isoValMax);
+    break;
+  case 5 :
+    // Case of Min-Max IsoVolume.
+    isoValMin = params[1];
+    isoValMax = params[2];
     std::cout << "Executing Min-Max IsoVolume." << std::endl;
     performMinMaxIsoVolume(input, variable, result, isoValMin, isoValMax);
     break;
   default:
-    std::cout << "Executing trivial IsoVolume." << std::endl;
-    performTrivialIsoVolume(input, variable, result, isoValMin);
+    std::cout << "Suitable option/params not provided" << std::endl;
+    exit(1);
     break;
   }
 
