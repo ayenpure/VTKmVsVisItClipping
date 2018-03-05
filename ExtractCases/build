@@ -1,0 +1,1 @@
+cmake -DVTKm_DIR=/home/abhishek/repositories/bmaster/lib/cmake/vtkm-1.1 -DCMAKE_BUILD_TYPE=Release
