@@ -23,7 +23,7 @@
 #define VTKM_DEVICE_ADAPTER VTKM_DEVICE_ADAPTER_SERIAL
 #endif
 
-using dataset_futures = std::vector<std::future<vtkm::cont::DataSet>>;
+using clipping_futures = std::vector<std::future<bool>>;
 
 using ExplicitType =
     vtkm::cont::CellSetPermutation<vtkm::cont::CellSetExplicit<>>;
@@ -136,20 +136,29 @@ void LaunchClippingThreads(std::vector<vtkm::cont::DataSet> &dataIn,
                            const std::string variable,
                            const vtkm::Float32 isoVal,
                            std::vector<vtkm::cont::DataSet> &dataOut,
-                           dataset_futures &futures) {
-  vtkm::Id totalCellCount = 0;
+                           int startPosition,
+                           int chunkSize) {
+  clipping_futures futures;
   // begin timing
   vtkm::cont::Timer<VTKM_DEFAULT_DEVICE_ADAPTER_TAG> timer;
-  for (int i = 0; i < dataIn.size(); i++) {
-    std::cout << "Input Cells : " << dataIn[i].GetCellSet(0).GetNumberOfCells()
-              << std::endl;
-    performTrivialIsoVolume(std::ref(dataIn[i]), variable, isoVal, dataOut[i]);
-    vtkm::Id cellCount = dataOut[i].GetCellSet(0).GetNumberOfCells();
-    std::cout << "Output Cells : " << cellCount << std::endl;
-    totalCellCount += cellCount;
+  for (int i = startPosition; i < startPosition + chunkSize; i++) {
+    //std::cout << "Launching thread : " << i << std::endl;
+    futures.push_back(std::async(std::launch::async,
+                                 performTrivialIsoVolume,
+                                 std::ref(dataIn[i]),
+                                 variable,
+                                 isoVal,
+                                 std::ref(dataOut[i])));
   }
-  std::cout << "Total Output Cells : " << totalCellCount << std::endl;
-  std::cout << "Time taken : " << timer.GetElapsedTime() << std::endl;
+  //Sync and end all threads in the current phase.
+  for (int i = 0; i < chunkSize; i++) {
+    //std::cout << "Getting future : " << i << std::endl;
+    if(!futures[i].get())
+    {
+      std::cerr << "Error occured in syncing thread" << std::endl;
+      exit(EXIT_FAILURE);
+    }
+  }
 }
 
 int CastCellSet(vtkm::cont::DataSet &input,
@@ -218,6 +227,9 @@ int main(int argc, char **argv) {
   const std::string filename(argv[1]);
   const std::string variable(argv[2]);
   float isoValue = atof(argv[3]);
+  int phases = 2;
+  if(argc == 5)
+    phases = atoi(argv[4]);
   std::cout << "Analyzing cases for " << filename << " on variable " << variable
             << " for isovalue " << isoValue << std::endl;
 
@@ -265,13 +277,23 @@ int main(int argc, char **argv) {
   ApplyThresholdFilter(dataset, 5, 6, variable, countVar, dataIn);
   ApplyThresholdFilter(dataset, 4, 4, variable, countVar, dataIn);
   ApplyThresholdFilter(dataset, 3, 3, variable, countVar, dataIn);
-  ApplyThresholdFilter(dataset, -1, -1, variable, countVar, dataIn);
+  //ApplyThresholdFilter(dataset, -1, -1, variable, countVar, dataIn);
 
   caseArray.ReleaseResources();
   numAffectedEdges.ReleaseResources();
 
-  std::vector<vtkm::cont::DataSet> dataOut(5);
-  dataset_futures futures(5);
-
-  LaunchClippingThreads(dataIn, variable, isoValue, dataOut, futures);
+  const size_t outSize = dataIn.size();
+  std::vector<vtkm::cont::DataSet> dataOut(outSize);
+  int pointer = 0;
+  int phase = 0;
+  //begin timing
+  vtkm::cont::Timer<VTKM_DEFAULT_DEVICE_ADAPTER_TAG> timer;
+  while(pointer < outSize)
+  {
+    if(pointer + phases > outSize)
+      phases = outSize - pointer;
+    LaunchClippingThreads(dataIn, variable, isoValue, dataOut, pointer, phases);
+    pointer += phases;
+  }
+  std::cout << "Time taken : " << timer.GetElapsedTime() << std::endl;
 }
