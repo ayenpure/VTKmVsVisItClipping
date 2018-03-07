@@ -1,3 +1,0 @@
-/home/abhishek/repositories/VTKmVsVisItClipping/CustomDataSet/CMakeFiles/edit_cache.dir
-/home/abhishek/repositories/VTKmVsVisItClipping/CustomDataSet/CMakeFiles/rebuild_cache.dir
-/home/abhishek/repositories/VTKmVsVisItClipping/CustomDataSet/CMakeFiles/datasetbuild.dir
