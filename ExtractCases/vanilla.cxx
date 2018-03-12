@@ -10,6 +10,7 @@
 #include <vtkm/cont/DataSetFieldAdd.h>
 #include <vtkm/cont/Timer.h>
 #include <vtkm/filter/ClipWithField.h>
+#include <vtkm/filter/FieldSelection.h>
 #include <vtkm/io/reader/VTKDataSetReader.h>
 #include <vtkm/worklet/DispatcherMapField.h>
 #include <vtkm/worklet/DispatcherMapTopology.h>
@@ -27,7 +28,11 @@ bool performTrivialIsoVolume(vtkm::cont::DataSet &input,
   vtkm::filter::ClipWithField filter;
   // Apply clip isoVal.
   filter.SetClipValue(isoVal);
-  result = filter.Execute(input, variable);
+
+  vtkm::filter::FieldSelection selection;
+  selection.AddField(variable, vtkm::cont::Field::ASSOC_POINTS);
+
+  result = filter.Execute(input, selection);
   filter.MapFieldOntoOutput(result, input.GetPointField(variable.c_str()));
   // Output of clip.
   output = result.GetDataSet();

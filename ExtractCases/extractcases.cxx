@@ -11,6 +11,7 @@
 #include <vtkm/cont/DataSetFieldAdd.h>
 #include <vtkm/cont/TryExecute.h>
 #include <vtkm/filter/ClipWithField.h>
+#include <vtkm/filter/FieldSelection.h>
 #include <vtkm/filter/Threshold.h>
 #include <vtkm/io/reader/VTKDataSetReader.h>
 #include <vtkm/worklet/CellDeepCopy.h>
@@ -125,7 +126,10 @@ bool performTrivialIsoVolume(vtkm::cont::DataSet &input,
   vtkm::filter::ClipWithField filter;
   // Apply clip isoVal.
   filter.SetClipValue(isoVal);
-  result = filter.Execute(input, variable);
+
+  vtkm::filter::FieldSelection selection;
+  selection.AddField(variable, vtkm::cont::Field::ASSOC_POINTS);
+  result = filter.Execute(input, selection);
   filter.MapFieldOntoOutput(result, input.GetPointField(variable.c_str()));
   // Output of clip.
   output = result.GetDataSet();
@@ -208,7 +212,11 @@ int ApplyThresholdFilter(vtkm::cont::DataSet &dataset, FieldType lowerThreshold,
   thresholdFilter = vtkm::filter::Threshold();
   thresholdFilter.SetLowerThreshold(lowerThreshold);
   thresholdFilter.SetUpperThreshold(upperThreshold);
-  result = thresholdFilter.Execute(dataset, thresholdVariable);
+
+  vtkm::filter::FieldSelection selection;
+  selection.AddField(thresholdVariable, vtkm::cont::Field::ASSOC_POINTS);
+
+  result = thresholdFilter.Execute(dataset, selection);
   thresholdFilter.MapFieldOntoOutput(result,
                                      dataset.GetPointField(mapVariable));
   CastCellSet(result.GetDataSet(), dataIn);
