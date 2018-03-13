@@ -141,9 +141,9 @@ void LaunchClippingThreads(std::vector<vtkm::cont::DataSet> &dataIn,
                            std::vector<vtkm::cont::DataSet> &dataOut,
                            int startPosition,
                            int chunkSize) {
-  /*clipping_futures futures;
+  clipping_futures futures;
   // begin timing
-  vtkm::cont::Timer<VTKM_DEFAULT_DEVICE_ADAPTER_TAG> timer;
+  vtkm::cont::Timer<VTKM_DEFAULT_DEVICE_ADAPTER_TAG> clipTimer;
   for (int i = startPosition; i < startPosition + chunkSize; i++) {
     //std::cout << "Launching thread : " << i << std::endl;
     futures.push_back(std::async(std::launch::async,
@@ -161,11 +161,11 @@ void LaunchClippingThreads(std::vector<vtkm::cont::DataSet> &dataIn,
       std::cerr << "Error occured in syncing thread" << std::endl;
       exit(EXIT_FAILURE);
     }
-  }*/
-
-  for (int i = startPosition; i < startPosition + chunkSize; i++) {
-    performTrivialIsoVolume(std::ref(dataIn[i]), variable, isoVal, std::ref(dataOut[i]));
   }
+
+  /*for (int i = startPosition; i < startPosition + chunkSize; i++) {
+    performTrivialIsoVolume(std::ref(dataIn[i]), variable, isoVal, std::ref(dataOut[i]));
+  }*/
 
 }
 
@@ -253,6 +253,8 @@ int main(int argc, char **argv) {
             << std::endl;
   std::cout << "Number of fields " << dataset.GetNumberOfFields() << std::endl;
 
+  vtkm::cont::Timer<VTKM_DEFAULT_DEVICE_ADAPTER_TAG> thresholdTimer;
+
   vtkm::cont::DynamicArrayHandle fieldData =
       dataset.GetPointField(variable).GetData();
 
@@ -282,7 +284,6 @@ int main(int argc, char **argv) {
   datasetFieldAdder.AddCellField(dataset, countVar, numAffectedEdges);
 
   std::vector<vtkm::cont::DataSet> dataIn;
-
   ApplyThresholdFilter(dataset, 7, 12, variable, countVar, dataIn);
   ApplyThresholdFilter(dataset, 5, 6, variable, countVar, dataIn);
   ApplyThresholdFilter(dataset, 4, 4, variable, countVar, dataIn);
@@ -292,11 +293,13 @@ int main(int argc, char **argv) {
   caseArray.ReleaseResources();
   numAffectedEdges.ReleaseResources();
 
+  std::cout << "Time taken for threshold : " << thresholdTimer.GetElapsedTime() << std::endl;
+
   const size_t outSize = dataIn.size();
   std::vector<vtkm::cont::DataSet> dataOut(outSize);
   int pointer = 0;
   //begin timing
-  vtkm::cont::Timer<VTKM_DEFAULT_DEVICE_ADAPTER_TAG> timer;
+  vtkm::cont::Timer<VTKM_DEFAULT_DEVICE_ADAPTER_TAG> clipTimer;
   while(pointer < outSize - 1)
   {
     if(pointer + phases > outSize)
@@ -305,7 +308,7 @@ int main(int argc, char **argv) {
     pointer += phases;
   }
   dataOut[outSize - 1] = dataIn[outSize - 1];
-  std::cout << "Time taken : " << timer.GetElapsedTime() << std::endl;
+  std::cout << "Time taken for clip : " << clipTimer.GetElapsedTime() << std::endl;
 
 
   // Simple verification block to check if the results are consistent with
