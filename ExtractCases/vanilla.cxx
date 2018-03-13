@@ -28,12 +28,10 @@ bool performTrivialIsoVolume(vtkm::cont::DataSet &input,
   vtkm::filter::ClipWithField filter;
   // Apply clip isoVal.
   filter.SetClipValue(isoVal);
+  filter.SetActiveField(variable);
 
-  vtkm::filter::FieldSelection selection;
-  selection.AddField(variable, vtkm::cont::Field::ASSOC_POINTS);
+  result = filter.Execute(input, vtkm::filter::FieldSelection({variable}));
 
-  result = filter.Execute(input, selection);
-  filter.MapFieldOntoOutput(result, input.GetPointField(variable.c_str()));
   // Output of clip.
   output = result.GetDataSet();
   return true;
@@ -68,10 +66,12 @@ int main(int argc, char **argv) {
   vtkm::cont::Timer<VTKM_DEFAULT_DEVICE_ADAPTER_TAG> timer;
 
   vtkm::cont::DataSet output;
+  performTrivialIsoVolume(dataset, variable, isoValue, output);
+
+  std::cout << "Time taken : " << timer.GetElapsedTime() << std::endl;
+
   std::cout << "Input Cells : " << dataset.GetCellSet(0).GetNumberOfCells()
             << std::endl;
-  performTrivialIsoVolume(dataset, variable, isoValue, output);
   std::cout << "Output Cells : " << output.GetCellSet(0).GetNumberOfCells()
             << std::endl;
-  std::cout << "Time taken : " << timer.GetElapsedTime() << std::endl;
 }

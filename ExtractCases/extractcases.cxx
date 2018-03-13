@@ -126,11 +126,10 @@ bool performTrivialIsoVolume(vtkm::cont::DataSet &input,
   vtkm::filter::ClipWithField filter;
   // Apply clip isoVal.
   filter.SetClipValue(isoVal);
+  filter.SetActiveField(variable);
 
-  vtkm::filter::FieldSelection selection;
-  selection.AddField(variable, vtkm::cont::Field::ASSOC_POINTS);
-  result = filter.Execute(input, selection);
-  filter.MapFieldOntoOutput(result, input.GetPointField(variable.c_str()));
+  result = filter.Execute(input, vtkm::filter::FieldSelection({variable}));
+
   // Output of clip.
   output = result.GetDataSet();
   return true;
@@ -142,7 +141,7 @@ void LaunchClippingThreads(std::vector<vtkm::cont::DataSet> &dataIn,
                            std::vector<vtkm::cont::DataSet> &dataOut,
                            int startPosition,
                            int chunkSize) {
-  clipping_futures futures;
+  /*clipping_futures futures;
   // begin timing
   vtkm::cont::Timer<VTKM_DEFAULT_DEVICE_ADAPTER_TAG> timer;
   for (int i = startPosition; i < startPosition + chunkSize; i++) {
@@ -162,7 +161,12 @@ void LaunchClippingThreads(std::vector<vtkm::cont::DataSet> &dataIn,
       std::cerr << "Error occured in syncing thread" << std::endl;
       exit(EXIT_FAILURE);
     }
+  }*/
+
+  for (int i = startPosition; i < startPosition + chunkSize; i++) {
+    performTrivialIsoVolume(std::ref(dataIn[i]), variable, isoVal, std::ref(dataOut[i]));
   }
+
 }
 
 int CastCellSet(vtkm::cont::DataSet &input,
@@ -212,13 +216,11 @@ int ApplyThresholdFilter(vtkm::cont::DataSet &dataset, FieldType lowerThreshold,
   thresholdFilter = vtkm::filter::Threshold();
   thresholdFilter.SetLowerThreshold(lowerThreshold);
   thresholdFilter.SetUpperThreshold(upperThreshold);
+  thresholdFilter.SetActiveField(thresholdVariable);
 
-  vtkm::filter::FieldSelection selection;
-  selection.AddField(thresholdVariable, vtkm::cont::Field::ASSOC_POINTS);
+  result = thresholdFilter.Execute(dataset,
+                                   vtkm::filter::FieldSelection({mapVariable}));
 
-  result = thresholdFilter.Execute(dataset, selection);
-  thresholdFilter.MapFieldOntoOutput(result,
-                                     dataset.GetPointField(mapVariable));
   CastCellSet(result.GetDataSet(), dataIn);
   return 0;
 }
@@ -285,7 +287,7 @@ int main(int argc, char **argv) {
   ApplyThresholdFilter(dataset, 5, 6, variable, countVar, dataIn);
   ApplyThresholdFilter(dataset, 4, 4, variable, countVar, dataIn);
   ApplyThresholdFilter(dataset, 3, 3, variable, countVar, dataIn);
-  //ApplyThresholdFilter(dataset, -1, -1, variable, countVar, dataIn);
+  ApplyThresholdFilter(dataset, -1, -1, variable, countVar, dataIn);
 
   caseArray.ReleaseResources();
   numAffectedEdges.ReleaseResources();
@@ -293,15 +295,28 @@ int main(int argc, char **argv) {
   const size_t outSize = dataIn.size();
   std::vector<vtkm::cont::DataSet> dataOut(outSize);
   int pointer = 0;
-  int phase = 0;
   //begin timing
   vtkm::cont::Timer<VTKM_DEFAULT_DEVICE_ADAPTER_TAG> timer;
-  while(pointer < outSize)
+  while(pointer < outSize - 1)
   {
     if(pointer + phases > outSize)
       phases = outSize - pointer;
     LaunchClippingThreads(dataIn, variable, isoValue, dataOut, pointer, phases);
     pointer += phases;
   }
+  dataOut[outSize - 1] = dataIn[outSize - 1];
   std::cout << "Time taken : " << timer.GetElapsedTime() << std::endl;
+
+
+  // Simple verification block to check if the results are consistent with
+  // one time filter execution.
+  vtkm::Id totalCellCount = 0;
+  for (int i = 0; i < outSize; i++) {
+    std::cout << "Input Cells : " << dataIn[i].GetCellSet(0).GetNumberOfCells()
+              << std::endl;
+    vtkm::Id cellCount = dataOut[i].GetCellSet(0).GetNumberOfCells();
+    std::cout << "Output Cells : " << cellCount << std::endl;
+    totalCellCount += cellCount;
+  }
+  std::cout << "Total Output Cells : " << totalCellCount << std::endl;
 }
