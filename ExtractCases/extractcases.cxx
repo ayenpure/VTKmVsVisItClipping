@@ -169,8 +169,8 @@ void LaunchClippingThreads(std::vector<vtkm::cont::DataSet> &dataIn,
 
 }
 
-int CastCellSet(vtkm::cont::DataSet &input,
-                std::vector<vtkm::cont::DataSet> &dataIn) {
+int CastCellSet(vtkm::cont::DataSet& input,
+                std::vector<vtkm::cont::DataSet>& dataIn) {
   vtkm::cont::DataSet output;
   vtkm::cont::DynamicCellSet cellSet = input.GetCellSet();
   vtkm::cont::CellSetExplicit<> explicitCellSet;
@@ -201,19 +201,23 @@ int CastCellSet(vtkm::cont::DataSet &input,
   vtkm::Id numFields = input.GetNumberOfFields();
   for (vtkm::Id ind = 0; ind < numFields; ind++)
     output.AddField(input.GetField(ind));
-  dataIn.emplace_back(output);
+
+  dataIn.push_back(output);
+
   return 0;
 }
 
-template <typename FieldType>
-int ApplyThresholdFilter(vtkm::cont::DataSet &dataset, FieldType lowerThreshold,
-                         FieldType upperThreshold,
+bool ApplyThresholdFilter(vtkm::cont::DataSet& dataset,
+                         vtkm::Id lowerThreshold,
+                         vtkm::Id upperThreshold,
                          const std::string mapVariable,
                          const std::string thresholdVariable,
-                         std::vector<vtkm::cont::DataSet> &dataIn) {
+                         std::vector<vtkm::cont::DataSet>& dataIn)
+{
   vtkm::filter::Threshold thresholdFilter;
   vtkm::filter::Result result;
   thresholdFilter = vtkm::filter::Threshold();
+
   thresholdFilter.SetLowerThreshold(lowerThreshold);
   thresholdFilter.SetUpperThreshold(upperThreshold);
   thresholdFilter.SetActiveField(thresholdVariable);
@@ -222,7 +226,52 @@ int ApplyThresholdFilter(vtkm::cont::DataSet &dataset, FieldType lowerThreshold,
                                    vtkm::filter::FieldSelection({mapVariable}));
 
   CastCellSet(result.GetDataSet(), dataIn);
-  return 0;
+
+  return true;
+}
+
+int ApplyThresholdToDataSet(vtkm::cont::DataSet& dataset,
+                            const std::string mapVariable,
+                            const std::string thresholdVariable,
+                            std::vector<vtkm::cont::DataSet>& dataIn)
+{
+  clipping_futures futures;
+
+  futures.push_back(std::async(std::launch::async, ApplyThresholdFilter,
+                               std::ref(dataset), 7, 12, mapVariable,
+                               thresholdVariable, std::ref(dataIn)));
+
+  futures.push_back(std::async(std::launch::async, ApplyThresholdFilter,
+                               std::ref(dataset), 5, 6, mapVariable,
+                               thresholdVariable, std::ref(dataIn)));
+
+  futures.push_back(std::async(std::launch::async, ApplyThresholdFilter,
+                               std::ref(dataset), 4, 4, mapVariable,
+                               thresholdVariable, std::ref(dataIn)));
+
+  futures.push_back(std::async(std::launch::async, ApplyThresholdFilter,
+                               std::ref(dataset), 3, 3, mapVariable,
+                               thresholdVariable, std::ref(dataIn)));
+
+  futures.push_back(std::async(std::launch::async, ApplyThresholdFilter,
+                               std::ref(dataset), -1, -1, mapVariable,
+                               thresholdVariable, std::ref(dataIn)));
+
+  /*ApplyThresholdFilter(dataset, 7, 12, variable, countVar, dataIn);
+  ApplyThresholdFilter(dataset, 5, 6, variable, countVar, dataIn);
+  ApplyThresholdFilter(dataset, 4, 4, variable, countVar, dataIn);
+  ApplyThresholdFilter(dataset, 3, 3, variable, countVar, dataIn);
+  ApplyThresholdFilter(dataset, -1, -1, variable, countVar, dataIn);*/
+
+  //Sync and end all threads in the current phase.
+  for (int i = 0; i < 5; i++) {
+    //std::cout << "Getting future : " << i << std::endl;
+    if(!futures[i].get())
+    {
+      std::cerr << "Error occured in syncing thread" << std::endl;
+      exit(EXIT_FAILURE);
+    }
+  }
 }
 
 int main(int argc, char **argv) {
@@ -284,11 +333,8 @@ int main(int argc, char **argv) {
   datasetFieldAdder.AddCellField(dataset, countVar, numAffectedEdges);
 
   std::vector<vtkm::cont::DataSet> dataIn;
-  ApplyThresholdFilter(dataset, 7, 12, variable, countVar, dataIn);
-  ApplyThresholdFilter(dataset, 5, 6, variable, countVar, dataIn);
-  ApplyThresholdFilter(dataset, 4, 4, variable, countVar, dataIn);
-  ApplyThresholdFilter(dataset, 3, 3, variable, countVar, dataIn);
-  ApplyThresholdFilter(dataset, -1, -1, variable, countVar, dataIn);
+  dataIn.reserve(5);
+  ApplyThresholdToDataSet(dataset, variable, countVar, dataIn);
 
   caseArray.ReleaseResources();
   numAffectedEdges.ReleaseResources();
@@ -309,7 +355,6 @@ int main(int argc, char **argv) {
   }
   dataOut[outSize - 1] = dataIn[outSize - 1];
   std::cout << "Time taken for clip : " << clipTimer.GetElapsedTime() << std::endl;
-
 
   // Simple verification block to check if the results are consistent with
   // one time filter execution.
